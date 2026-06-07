@@ -19,5 +19,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web"
   },
-  "private": true
+  "private": true,
+  "devDependencies": {
+    "geotiff": "^3.0.5"
+  }
 }

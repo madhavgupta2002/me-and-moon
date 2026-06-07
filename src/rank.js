@@ -54,10 +54,19 @@ export function computeRank(userLat, userLon, subLat, subLon, citiesData) {
     const capRadiusKm = surfaceDistanceKm(userLat, userLon, subLat, subLon);
     const density = citiesData.density || DEFAULT_DENSITY_PER_KM2;
 
+    // Cheap exact pre-filter. A point's latitude difference (in degrees) is always
+    // <= its great-circle angular distance, so any cell whose latitude is farther
+    // than the cap (plus the largest possible city footprint) cannot overlap the
+    // cap and can be skipped without a haversine call. With a 165k-cell raster
+    // this keeps the per-second recompute fast for typical (non-antipodal) caps.
+    const KM_PER_DEG_LAT = 111.195;
+    const latWindowDeg = capRadiusKm / KM_PER_DEG_LAT + MAX_CITY_RADIUS_KM / KM_PER_DEG_LAT + 0.001;
+
     let closerPopulation = 0;
     const cities = citiesData.cities;
     for (let i = 0; i < cities.length; i++) {
         const c = cities[i];
+        if (Math.abs(c[0] - subLat) > latWindowDeg) continue;
         const pop = c[2];
         const cityDistKm = surfaceDistanceKm(c[0], c[1], subLat, subLon);
         const rCity = cityRadiusKm(pop, density);

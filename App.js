@@ -242,8 +242,8 @@ export default function App() {
         )}
 
         <Text style={styles.footnote}>
-          Population from SimpleMaps World Cities (CC BY 4.0). Ranking covers
-          ~{formatNumber(citiesData.totalPopulation)} people in {citiesData.count} places.
+          Population from WorldPop global grid (~1 km, downsampled). Ranking covers
+          ~{formatNumber(citiesData.totalPopulation)} people across {formatNumber(citiesData.count)} grid cells.
         </Text>
       </ScrollView>
     </View>

@@ -36,6 +36,11 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
+# large raster build inputs (downloaded on demand, never committed/bundled)
+.data/
+*.tif
+assets/cities.urban.json
+
 # generated native folders
 /ios
 /android
