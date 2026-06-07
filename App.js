@@ -15,7 +15,7 @@ import { computeRank } from './src/rank';
 import MapPanel from './src/MapPanel';
 import citiesData from './assets/cities.json';
 
-const MOON_REFRESH_MS = 10000;
+const MOON_REFRESH_MS = 1000;
 
 function formatNumber(n) {
   return Math.round(n).toLocaleString();
