@@ -1,21 +1,37 @@
 #!/usr/bin/env node
 /*
- * build-cities.js
+ * build-cities.js  —  STEP 1 of the data pipeline (urban points).
  *
- * Converts the SimpleMaps "World Cities" CSV into a compact JSON asset that the
- * app bundles and loads at runtime.
+ * Converts the SimpleMaps "World Cities" CSV into a compact JSON asset of urban
+ * population points. This covers cities/towns only (~4-5 billion people). The
+ * remaining ~3 billion rural people are NOT in any city list, so STEP 2
+ * (scripts/build-grid.js) scatters them as a coarse land grid to reach the true
+ * world total. The app loads the STEP 2 output (assets/cities.json).
  *
  * Data source (free tier, CC BY 4.0):
  *   https://simplemaps.com/data/world-cities  ->  "Basic" download (worldcities.csv)
  *
  * Usage:
- *   node scripts/build-cities.js path/to/worldcities.csv
+ *   node scripts/build-cities.js path/to/worldcities.csv   # writes assets/cities.urban.json
+ *   node scripts/build-grid.js                             # writes assets/cities.json
  *
  * Output:
- *   assets/cities.json  ->  { totalPopulation, count, generatedAt, source, cities: [[lat, lng, pop], ...] }
+ *   assets/cities.urban.json -> { totalPopulation, count, generatedAt, source, cities: [[lat, lng, pop], ...] }
  *
  * Only rows that have a numeric population are kept (population is the basis of
  * the ranking). Coordinates are rounded to 4 decimals (~11 m) to shrink the file.
+ *
+ * ---------------------------------------------------------------------------
+ * FULL / EXACT DATA (covers all ~8.1B incl. rural, no city approximation):
+ *   Use a gridded population raster instead of a city list:
+ *     - NASA SEDAC GPWv4  (https://sedac.ciesin.columbia.edu) ~1 km cells, or
+ *     - WorldPop          (https://www.worldpop.org)          ~100 m / 1 km cells.
+ *   Download the population-count GeoTIFF, then in a build script downsample it
+ *   (e.g. to 0.25-1.0 deg cells) and emit one [lat, lng, pop] entry per non-zero
+ *   cell directly into assets/cities.json. That replaces BOTH steps below and
+ *   needs no rural approximation. Full-resolution rasters are hundreds of MB to
+ *   GB, so always downsample before bundling into the app (or serve via API).
+ * ---------------------------------------------------------------------------
  */
 
 const fs = require('fs');
@@ -95,7 +111,7 @@ function main() {
 
     const outDir = path.join(__dirname, '..', 'assets');
     fs.mkdirSync(outDir, { recursive: true });
-    const outPath = path.join(outDir, 'cities.json');
+    const outPath = path.join(outDir, 'cities.urban.json');
     const payload = {
         totalPopulation,
         count: cities.length,
@@ -104,7 +120,8 @@ function main() {
         cities,
     };
     fs.writeFileSync(outPath, JSON.stringify(payload));
-    console.log(`Wrote ${cities.length} cities (total population ${totalPopulation.toLocaleString()}) to ${outPath}`);
+    console.log(`Wrote ${cities.length} urban cities (population ${totalPopulation.toLocaleString()}) to ${outPath}`);
+    console.log('Next: run  node scripts/build-grid.js  to add rural fill and write assets/cities.json');
 }
 
 main();
