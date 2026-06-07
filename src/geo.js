@@ -29,6 +29,34 @@ export function surfaceDistanceKm(lat1, lon1, lat2, lon2) {
     return (angularDistanceDeg(lat1, lon1, lat2, lon2) * Math.PI / 180) * EARTH_RADIUS_KM;
 }
 
+const clampUnit = (x) => Math.min(1, Math.max(-1, x));
+
+/**
+ * Area of intersection of two circles, radii r0 and r1, whose centers are a
+ * distance d apart. Closed-form lens area. Used to figure out what fraction of
+ * a city's spatial footprint falls inside the "closer to the Moon" cap, so the
+ * ranking changes smoothly instead of snapping a whole metro in or out at once.
+ *
+ * @returns {number} overlap area in the same squared units as the radii.
+ */
+export function circleOverlapArea(d, r0, r1) {
+    if (r0 <= 0 || r1 <= 0) return 0;
+    if (d >= r0 + r1) return 0; // disjoint
+    if (d <= Math.abs(r0 - r1)) {
+        // One circle is entirely inside the other.
+        const rMin = Math.min(r0, r1);
+        return Math.PI * rMin * rMin;
+    }
+    const r0s = r0 * r0;
+    const r1s = r1 * r1;
+    const a0 = r0s * Math.acos(clampUnit((d * d + r0s - r1s) / (2 * d * r0)));
+    const a1 = r1s * Math.acos(clampUnit((d * d + r1s - r0s) / (2 * d * r1)));
+    const tri = 0.5 * Math.sqrt(
+        Math.max(0, (-d + r0 + r1) * (d + r0 - r1) * (d - r0 + r1) * (d + r0 + r1))
+    );
+    return a0 + a1 - tri;
+}
+
 /**
  * Straight-line (chord-through-space) distance from an observer on Earth's
  * surface to the Moon, using the law of cosines in the Earth-Moon triangle.
