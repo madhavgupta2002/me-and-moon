@@ -5,8 +5,9 @@
 // sub-lunar point, and the "circle" (spherical cap) between them.
 
 import { useEffect, useMemo, useRef } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
-import { WebView } from 'react-native-webview';
+import { Platform, StyleSheet } from 'react-native';
+
+const WebView = Platform.OS === 'web' ? null : require('react-native-webview').WebView;
 
 function buildHtml() {
     return `<!DOCTYPE html>
@@ -18,58 +19,92 @@ function buildHtml() {
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     html, body, #map { height: 100%; margin: 0; padding: 0; background: #0b1026; }
+    .pin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 6px rgba(0,0,0,0.5); }
   </style>
 </head>
 <body>
   <div id="map"></div>
   <script>
-    var map = L.map('map', { zoomControl: false, attributionControl: true }).setView([0, 0], 1);
+    var RN = window.ReactNativeWebView;
+    var map = L.map('map', { zoomControl: true, attributionControl: true }).setView([0, 0], 2);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
-    var userMarker = L.circleMarker([0, 0], { radius: 7, color: '#4f8cff', fillColor: '#4f8cff', fillOpacity: 1 }).addTo(map);
-    var moonMarker = L.circleMarker([0, 0], { radius: 7, color: '#ffd24f', fillColor: '#ffd24f', fillOpacity: 1 }).addTo(map);
-    var cap = L.circle([0, 0], { radius: 0, color: '#ffd24f', weight: 2, fillColor: '#ffd24f', fillOpacity: 0.12 }).addTo(map);
-    userMarker.bindTooltip('You');
-    moonMarker.bindTooltip('Moon overhead');
+    function pin(color) {
+      return L.divIcon({ className: '', html: '<div class="pin" style="background:' + color + '"></div>', iconSize: [16, 16], iconAnchor: [8, 8] });
+    }
 
+    // Created draggable so the drag handler exists; toggled per update.
+    var userMarker = L.marker([0, 0], { icon: pin('#4f8cff'), draggable: true }).addTo(map).bindTooltip('You');
+    var moonMarker = L.marker([0, 0], { icon: pin('#ffd24f'), draggable: true }).addTo(map).bindTooltip('Moon overhead');
+    var cap = L.circle([0, 0], { radius: 0, color: '#ffd24f', weight: 2, fillColor: '#ffd24f', fillOpacity: 0.12 }).addTo(map);
+
+    function post(kind, latlng) {
+      var msg = JSON.stringify({ type: 'drag', kind: kind, lat: latlng.lat, lon: latlng.lng });
+      if (RN) RN.postMessage(msg);
+      else if (window.parent !== window) window.parent.postMessage(msg, '*');
+    }
+    moonMarker.on('drag', function () { cap.setLatLng(moonMarker.getLatLng()); });
+    userMarker.on('dragend', function () { post('user', userMarker.getLatLng()); });
+    moonMarker.on('dragend', function () { post('moon', moonMarker.getLatLng()); });
+
+    var firstFit = true;
     window.updateMoon = function (d) {
       userMarker.setLatLng([d.userLat, d.userLon]);
       moonMarker.setLatLng([d.moonLat, d.moonLon]);
       cap.setLatLng([d.moonLat, d.moonLon]);
       cap.setRadius(d.radiusM);
-      var bounds = L.latLngBounds([[d.userLat, d.userLon], [d.moonLat, d.moonLon]]);
-      map.fitBounds(bounds.pad(0.5), { maxZoom: 5, animate: false });
+      if (userMarker.dragging) { d.draggable ? userMarker.dragging.enable() : userMarker.dragging.disable(); }
+      if (moonMarker.dragging) { d.draggable ? moonMarker.dragging.enable() : moonMarker.dragging.disable(); }
+      if (firstFit || d.fit) {
+        var bounds = L.latLngBounds([[d.userLat, d.userLon], [d.moonLat, d.moonLon]]);
+        map.fitBounds(bounds.pad(0.5), { maxZoom: 5, animate: false });
+        firstFit = false;
+      }
     };
+    // In an iframe, updates arrive via postMessage from the parent.
+    window.addEventListener('message', function (ev) {
+      try {
+        var d = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data;
+        if (d && d.type === 'update') window.updateMoon(d);
+      } catch (e) {}
+    });
     document.title = 'ready';
   </script>
 </body>
 </html>`;
 }
 
-export default function MapPanel({ userLat, userLon, moonLat, moonLon, radiusM }) {
+export default function MapPanel({ userLat, userLon, moonLat, moonLon, radiusM, draggable = false, onDragMarker }) {
     const ref = useRef(null);
     const html = useMemo(() => buildHtml(), []);
 
-    const inject = useMemo(() => {
-        const payload = JSON.stringify({ userLat, userLon, moonLat, moonLon, radiusM });
-        return `window.updateMoon && window.updateMoon(${payload}); true;`;
-    }, [userLat, userLon, moonLat, moonLon, radiusM]);
+    const payload = useMemo(
+        () => ({ userLat, userLon, moonLat, moonLon, radiusM, draggable }),
+        [userLat, userLon, moonLat, moonLon, radiusM, draggable]
+    );
+    const inject = useMemo(
+        () => `window.updateMoon && window.updateMoon(${JSON.stringify(payload)}); true;`,
+        [payload]
+    );
 
-    // Push fresh coordinates into the WebView whenever they change.
+    // Native: push fresh coordinates into the WebView whenever they change.
+    // No-op on web (the WebView ref is never set there).
     useEffect(() => {
-        if (Platform.OS !== 'web' && ref.current) {
-            ref.current.injectJavaScript(inject);
-        }
+        if (Platform.OS !== 'web' && ref.current) ref.current.injectJavaScript(inject);
     }, [inject]);
 
+    // Web: render the same Leaflet HTML inside an iframe and talk to it via
+    // postMessage. react-native-webview has no web implementation.
     if (Platform.OS === 'web') {
         return (
-            <View style={[styles.fallback, styles.center]}>
-                <Text style={styles.fallbackText}>Map preview is available on the mobile app.</Text>
-            </View>
+            <WebMap
+                html={html}
+                payload={payload}
+                onDragMarker={onDragMarker}
+            />
         );
     }
 
@@ -81,15 +116,64 @@ export default function MapPanel({ userLat, userLon, moonLat, moonLon, radiusM }
             source={{ html }}
             injectedJavaScript={inject}
             onLoadEnd={() => ref.current && ref.current.injectJavaScript(inject)}
+            onMessage={(e) => {
+                try {
+                    const m = JSON.parse(e.nativeEvent.data);
+                    if (m.type === 'drag' && onDragMarker) onDragMarker(m.kind, m.lat, m.lon);
+                } catch (err) {
+                    // ignore malformed messages
+                }
+            }}
             javaScriptEnabled
             domStorageEnabled
         />
     );
 }
 
+// Web-only Leaflet map rendered in an iframe.
+function WebMap({ html, payload, onDragMarker }) {
+    const iframeRef = useRef(null);
+    const readyRef = useRef(false);
+
+    const send = () => {
+        const win = iframeRef.current && iframeRef.current.contentWindow;
+        if (win) win.postMessage({ type: 'update', ...payload }, '*');
+    };
+
+    // Listen for drag messages coming back from the iframe.
+    useEffect(() => {
+        function handle(ev) {
+            try {
+                const m = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data;
+                if (m && m.type === 'drag' && onDragMarker) onDragMarker(m.kind, m.lat, m.lon);
+            } catch (e) {
+                // ignore
+            }
+        }
+        window.addEventListener('message', handle);
+        return () => window.removeEventListener('message', handle);
+    }, [onDragMarker]);
+
+    // Push updates whenever the payload changes (and once the iframe is ready).
+    useEffect(() => {
+        if (readyRef.current) send();
+    }); // eslint-disable-line react-hooks/exhaustive-deps
+
+    return (
+        <iframe
+            ref={iframeRef}
+            title="moon-map"
+            srcDoc={html}
+            style={{ border: 'none', width: '100%', height: '100%', background: '#0b1026' }}
+            onLoad={() => {
+                readyRef.current = true;
+                // Give Leaflet a tick to register its message listener.
+                setTimeout(send, 50);
+            }}
+        />
+    );
+}
+
 const styles = StyleSheet.create({
     web: { flex: 1, backgroundColor: '#0b1026' },
-    fallback: { flex: 1, backgroundColor: '#161d3d' },
-    center: { alignItems: 'center', justifyContent: 'center' },
-    fallbackText: { color: '#9aa4d4', textAlign: 'center', padding: 16 },
 });

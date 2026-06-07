@@ -27,10 +27,13 @@ function formatCoord(value, posLabel, negLabel) {
 }
 
 export default function App() {
+  const [mode, setMode] = useState('live'); // live | sim
   const [permission, setPermission] = useState('pending'); // pending | granted | denied
   const [coords, setCoords] = useState(null);
   const [now, setNow] = useState(() => new Date());
   const [errorMsg, setErrorMsg] = useState('');
+  const [simUser, setSimUser] = useState({ lat: 20, lon: 0 });
+  const [simMoon, setSimMoon] = useState({ lat: 0, lon: 0 });
   const watcherRef = useRef(null);
 
   // Request permission and start watching GPS.
@@ -67,32 +70,63 @@ export default function App() {
     };
   }, []);
 
-  // Tick the clock so the Moon position keeps updating.
+  // Tick the clock so the Moon position keeps updating. Paused in simulator
+  // mode so manual drags are not overwritten.
   useEffect(() => {
+    if (mode !== 'live') return undefined;
     const id = setInterval(() => setNow(new Date()), MOON_REFRESH_MS);
     return () => clearInterval(id);
-  }, []);
+  }, [mode]);
 
-  // Derived values.
-  const subLunar = getSubLunarPoint(now);
+  // Seed simulator positions from the live values when entering sim mode.
+  function enterSimulator() {
+    const live = getSubLunarPoint(new Date());
+    setSimMoon({ lat: +live.lat.toFixed(2), lon: +live.lon.toFixed(2) });
+    if (coords) {
+      setSimUser({ lat: +coords.latitude.toFixed(2), lon: +coords.longitude.toFixed(2) });
+    }
+    setMode('sim');
+  }
+
+  function handleDragMarker(kind, lat, lon) {
+    const next = { lat: +lat.toFixed(4), lon: +lon.toFixed(4) };
+    if (kind === 'user') setSimUser(next);
+    else setSimMoon(next);
+  }
+
+  function resetMoonToLive() {
+    const live = getSubLunarPoint(new Date());
+    setSimMoon({ lat: +live.lat.toFixed(2), lon: +live.lon.toFixed(2) });
+  }
+
+  // Derived values. In sim mode positions come from the draggable markers; the
+  // Earth-Moon distance still uses the real current Moon distance.
+  const liveSub = getSubLunarPoint(now);
+  const moonDistanceKm = liveSub.distanceKm;
+  const isSim = mode === 'sim';
+
+  const displayUser = isSim
+    ? simUser
+    : coords
+      ? { lat: coords.latitude, lon: coords.longitude }
+      : null;
+  const displayMoon = isSim ? simMoon : { lat: liveSub.lat, lon: liveSub.lon };
+
   let result = null;
-  if (coords) {
+  if (displayUser && displayMoon) {
     const ranking = computeRank(
-      coords.latitude,
-      coords.longitude,
-      subLunar.lat,
-      subLunar.lon,
+      displayUser.lat,
+      displayUser.lon,
+      displayMoon.lat,
+      displayMoon.lon,
       citiesData
     );
-    const moonKm = userToMoonDistanceKm(
-      ranking.userAngularDeg,
-      subLunar.distanceKm
-    );
+    const moonKm = userToMoonDistanceKm(ranking.userAngularDeg, moonDistanceKm);
     const groundKm = surfaceDistanceKm(
-      coords.latitude,
-      coords.longitude,
-      subLunar.lat,
-      subLunar.lon
+      displayUser.lat,
+      displayUser.lon,
+      displayMoon.lat,
+      displayMoon.lon
     );
     result = { ranking, moonKm, groundKm };
   }
@@ -104,22 +138,50 @@ export default function App() {
         <Text style={styles.title}>🌙 moon &amp; me</Text>
         <Text style={styles.subtitle}>How close are you to the Moon, right now?</Text>
 
-        {permission === 'pending' && (
+        <View style={styles.toggleRow}>
+          <Text
+            style={[styles.toggleBtn, !isSim && styles.toggleBtnActive]}
+            onPress={() => setMode('live')}
+          >
+            📍 Live GPS
+          </Text>
+          <Text
+            style={[styles.toggleBtn, isSim && styles.toggleBtnActive]}
+            onPress={enterSimulator}
+          >
+            🧪 Simulator
+          </Text>
+        </View>
+
+        {isSim && (
+          <View style={styles.card}>
+            <Text style={styles.simHint}>
+              Drag the blue (you) and yellow (Moon) pins on the map to test any
+              position. The rank updates instantly.
+            </Text>
+            <Text style={styles.resetBtn} onPress={resetMoonToLive}>
+              Reset Moon to real position
+            </Text>
+          </View>
+        )}
+
+        {mode === 'live' && permission === 'pending' && (
           <View style={styles.card}>
             <ActivityIndicator color="#cbd5ff" />
             <Text style={styles.muted}>Requesting location permission…</Text>
           </View>
         )}
 
-        {permission === 'denied' && (
+        {mode === 'live' && permission === 'denied' && (
           <View style={styles.card}>
             <Text style={styles.error}>
-              Location permission denied. Enable it in settings to play.
+              Location permission denied. Enable it in settings, or try Simulator
+              mode.
             </Text>
           </View>
         )}
 
-        {permission === 'granted' && !coords && (
+        {mode === 'live' && permission === 'granted' && !coords && (
           <View style={styles.card}>
             <ActivityIndicator color="#cbd5ff" />
             <Text style={styles.muted}>Getting your GPS fix…</Text>
@@ -132,10 +194,12 @@ export default function App() {
           </View>
         ) : null}
 
-        {result && (
+        {result && displayUser && (
           <>
             <View style={styles.rankCard}>
-              <Text style={styles.rankLabel}>YOUR RANK</Text>
+              <Text style={styles.rankLabel}>
+                {isSim ? 'SIMULATED RANK' : 'YOUR RANK'}
+              </Text>
               <Text style={styles.rankValue}>#{formatNumber(result.ranking.rank)}</Text>
               <Text style={styles.rankSub}>
                 closer than {(100 - result.ranking.percentileCloser * 100).toFixed(2)}% of
@@ -150,12 +214,12 @@ export default function App() {
                 value={`${formatNumber(result.groundKm)} km (${result.ranking.userAngularDeg.toFixed(2)}°)`}
               />
               <Row
-                label="Your position"
-                value={`${formatCoord(coords.latitude, 'N', 'S')}, ${formatCoord(coords.longitude, 'E', 'W')}`}
+                label={isSim ? 'Simulated position' : 'Your position'}
+                value={`${formatCoord(displayUser.lat, 'N', 'S')}, ${formatCoord(displayUser.lon, 'E', 'W')}`}
               />
               <Row
                 label="Moon overhead at"
-                value={`${formatCoord(subLunar.lat, 'N', 'S')}, ${formatCoord(subLunar.lon, 'E', 'W')}`}
+                value={`${formatCoord(displayMoon.lat, 'N', 'S')}, ${formatCoord(displayMoon.lon, 'E', 'W')}`}
               />
               <Row
                 label="People closer than you"
@@ -165,11 +229,13 @@ export default function App() {
 
             <View style={styles.mapCard}>
               <MapPanel
-                userLat={coords.latitude}
-                userLon={coords.longitude}
-                moonLat={subLunar.lat}
-                moonLon={subLunar.lon}
+                userLat={displayUser.lat}
+                userLon={displayUser.lon}
+                moonLat={displayMoon.lat}
+                moonLon={displayMoon.lon}
                 radiusM={result.groundKm * 1000}
+                draggable={isSim}
+                onDragMarker={handleDragMarker}
               />
             </View>
           </>
@@ -214,6 +280,37 @@ const styles = StyleSheet.create({
     fontSize: 15,
     textAlign: 'center',
     marginBottom: 8,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  toggleBtn: {
+    flex: 1,
+    textAlign: 'center',
+    color: '#9aa4d4',
+    backgroundColor: '#161d3d',
+    paddingVertical: 12,
+    borderRadius: 14,
+    overflow: 'hidden',
+    fontWeight: '700',
+    borderWidth: 1,
+    borderColor: '#2d3a7a',
+  },
+  toggleBtnActive: {
+    color: '#0b1026',
+    backgroundColor: '#ffd24f',
+    borderColor: '#ffd24f',
+  },
+  simHint: {
+    color: '#cbd5ff',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  resetBtn: {
+    color: '#ffd24f',
+    fontWeight: '700',
+    paddingTop: 4,
   },
   card: {
     backgroundColor: '#161d3d',
