@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,16 +12,8 @@ import * as Location from 'expo-location';
 import { getSubLunarPoint } from './src/moon';
 import { surfaceDistanceKm, userToMoonDistanceKm } from './src/geo';
 import { computeRank } from './src/rank';
+import MapPanel from './src/MapPanel';
 import citiesData from './assets/cities.json';
-
-// react-native-maps does not run on web; load it lazily on native only.
-let MapView, Marker, Circle;
-if (Platform.OS !== 'web') {
-  const Maps = require('react-native-maps');
-  MapView = Maps.default;
-  Marker = Maps.Marker;
-  Circle = Maps.Circle;
-}
 
 const MOON_REFRESH_MS = 10000;
 
@@ -172,37 +163,15 @@ export default function App() {
               />
             </View>
 
-            {MapView && (
-              <View style={styles.mapCard}>
-                <MapView
-                  style={styles.map}
-                  initialRegion={{
-                    latitude: coords.latitude,
-                    longitude: coords.longitude,
-                    latitudeDelta: 80,
-                    longitudeDelta: 80,
-                  }}
-                >
-                  <Marker
-                    coordinate={{ latitude: coords.latitude, longitude: coords.longitude }}
-                    title="You"
-                    pinColor="#4f8cff"
-                  />
-                  <Marker
-                    coordinate={{ latitude: subLunar.lat, longitude: subLunar.lon }}
-                    title="Moon overhead"
-                    pinColor="#ffd24f"
-                  />
-                  <Circle
-                    center={{ latitude: subLunar.lat, longitude: subLunar.lon }}
-                    radius={result.groundKm * 1000}
-                    strokeColor="rgba(255,210,79,0.9)"
-                    fillColor="rgba(255,210,79,0.15)"
-                    strokeWidth={2}
-                  />
-                </MapView>
-              </View>
-            )}
+            <View style={styles.mapCard}>
+              <MapPanel
+                userLat={coords.latitude}
+                userLon={coords.longitude}
+                moonLat={subLunar.lat}
+                moonLon={subLunar.lon}
+                radiusM={result.groundKm * 1000}
+              />
+            </View>
           </>
         )}
 
@@ -299,9 +268,6 @@ const styles = StyleSheet.create({
     height: 320,
     borderRadius: 18,
     overflow: 'hidden',
-  },
-  map: {
-    flex: 1,
   },
   muted: {
     color: '#9aa4d4',
